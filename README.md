@@ -52,19 +52,29 @@ is whatever OpenRewrite produces.
 
 ## How upstream tracking works
 
-A scheduled GitHub Actions workflow ([`check-upstream.yml`](.github/workflows/check-upstream.yml))
-runs weekly, queries Apache Jackrabbit's release tags, and opens a `upstream-bump`
-labelled PR when a newer `jackrabbit-2.x.y` tag is published. The PR:
+Dependabot handles the polling. A tracker-only `<dependencyManagement>` entry
+in `pom.xml` declares `org.apache.jackrabbit:jackrabbit-webdav` at
+`${upstream.jackrabbit.version}`, with no corresponding `<dependencies>` entry —
+so the coordinate stays off the compile classpath but is visible to Dependabot's
+Maven manifest scan ([`.github/dependabot.yml`](.github/dependabot.yml)).
 
-1. Downloads the new upstream `*-sources.jar` from Maven Central, replacing the
-   one at the repo root
-2. Re-extracts the archive over `src/main/java/`
-3. Runs `mvn rewrite:run` so OpenRewrite re-applies the Jakarta EE 10 transform
-4. Bumps the `<version>` in `pom.xml` to `<new-upstream>-jakarta-ee10`
+When Apache cuts a new `jackrabbit-webdav` release, Dependabot opens a PR
+labelled `upstream-bump` that bumps the `upstream.jackrabbit.version` property.
+That PR fires [`bump-on-dependabot.yml`](.github/workflows/bump-on-dependabot.yml),
+which does the work Dependabot can't:
 
-The smoke test ([`ci.yml`](.github/workflows/ci.yml)) gates merge: if the new
-upstream version still cleanly transforms and links against Jakarta Servlet 6.0,
-the bump is safe to merge.
+1. Reads the new upstream version from the bumped property
+2. Downloads the matching `*-sources.jar` from Maven Central, replacing the
+   `sources.jar` at the repo root
+3. Re-extracts source into `src/main/java/` (`.java` files) and
+   `src/main/resources/` (everything else)
+4. Runs `mvn rewrite:run` to re-apply the Jakarta EE 10 transform
+5. Bumps the project `<version>` to `<new-upstream>-jakarta-ee10`
+6. Commits and pushes back onto the Dependabot branch
+
+The smoke test ([`ci.yml`](.github/workflows/ci.yml)) then re-runs against the
+follow-up commit and gates merge: if the new upstream version still cleanly
+transforms and links against Jakarta Servlet 6.0, the bump is safe to merge.
 
 ## How to cut a release
 

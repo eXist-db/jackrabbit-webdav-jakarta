@@ -26,7 +26,30 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
+        <!--
+            Upstream Apache Jackrabbit version this artifact is derived from.
+            Tracked by Dependabot via the <dependencyManagement> block below; do
+            not edit by hand — the bump-on-dependabot workflow updates this and
+            the project <version> together when a new upstream is released.
+        -->
+        <upstream.jackrabbit.version>2.22.3</upstream.jackrabbit.version>
     </properties>
+
+    <!--
+        Tracker-only entry: declares the upstream coordinate so Dependabot opens
+        a PR when Apache publishes a new jackrabbit-webdav release, but puts
+        nothing on the compile classpath (no corresponding <dependencies> entry).
+        See .github/workflows/bump-on-dependabot.yml for what happens next.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.jackrabbit</groupId>
+                <artifactId>jackrabbit-webdav</artifactId>
+                <version>${upstream.jackrabbit.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>

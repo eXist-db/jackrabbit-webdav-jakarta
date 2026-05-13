@@ -12,3 +12,23 @@ updates:
       - github-actions
     commit-message:
       prefix: "ci"
+
+  # Watches the upstream Apache Jackrabbit coordinate declared (tracker-only)
+  # in pom.xml's <dependencyManagement>. When Apache cuts a new release,
+  # Dependabot bumps the upstream.jackrabbit.version property; the
+  # bump-on-dependabot.yml workflow then re-vendors sources.jar, runs
+  # OpenRewrite, and updates the project version, committing back to the
+  # Dependabot branch.
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Etc/UTC
+    labels:
+      - dependencies
+      - upstream-bump
+    commit-message:
+      prefix: "upstream"
+    open-pull-requests-limit: 1
