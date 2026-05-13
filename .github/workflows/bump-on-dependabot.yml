@@ -1,0 +1,73 @@
+name: Apply upstream bump on Dependabot PR
+
+# Replaces the prior cron-driven check-upstream.yml: Dependabot handles the
+# polling (see .github/dependabot.yml's maven ecosystem entry, which watches
+# the tracker-only <dependencyManagement> coordinate in pom.xml). When
+# Dependabot opens a PR bumping the upstream.jackrabbit.version property,
+# this workflow does the irreducible follow-up work that Dependabot itself
+# can't do: re-vendor sources.jar, re-apply the OpenRewrite Jakarta EE 10
+# transform, and update the project version — all committed back onto the
+# Dependabot branch so ci.yml's smoke test gates merge.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-bump:
+    # Three guards (per Joe's review):
+    #   1. Author is Dependabot — bot-opened PRs only
+    #   2. Label is upstream-bump — distinguishes the Maven ecosystem update
+    #      from the github-actions one (which has no follow-up work)
+    #   3. PR head is in this repo — Dependabot branches are always in-repo;
+    #      a head from a fork means a malicious actor is impersonating the
+    #      label or actor check, so refuse to run
+    if: >-
+      github.actor == 'dependabot[bot]'
+      && contains(github.event.pull_request.labels.*.name, 'upstream-bump')
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          # Use the workflow token so the follow-up commit can be pushed back
+          # to the Dependabot branch.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'dependabot[bot]'
+          git config user.email '49699333+dependabot[bot]@users.noreply.github.com'
+
+      # The bump script lives at .github/scripts/bump-upstream.sh (checked in,
+      # never read from the PR's pom.xml). Dependabot's manifest-only PR diffs
+      # don't touch this path, so in practice we're always executing the
+      # main-branch script — but the three guards above (bot author, label,
+      # same-repo head) are what actually keep arbitrary code from running
+      # under the pull_request_target token.
+      - name: Run upstream bump script
+        run: ./.github/scripts/bump-upstream.sh
+
+      - name: Commit and push if changed
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No changes produced by bump script; nothing to commit."
+            exit 0
+          fi
+          git add -A
+          git commit -m "Re-vendor sources and re-apply Jakarta EE 10 transform"
+          git push

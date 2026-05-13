@@ -26,7 +26,30 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
+        <!--
+            Upstream Apache Jackrabbit version this artifact is derived from.
+            Tracked by Dependabot via the <dependencyManagement> block below; do
+            not edit by hand — the bump-on-dependabot workflow updates this and
+            the project <version> together when a new upstream is released.
+        -->
+        <upstream.jackrabbit.version>2.22.3</upstream.jackrabbit.version>
     </properties>
+
+    <!--
+        Tracker-only entry: declares the upstream coordinate so Dependabot opens
+        a PR when Apache publishes a new jackrabbit-webdav release, but puts
+        nothing on the compile classpath (no corresponding <dependencies> entry).
+        See .github/workflows/bump-on-dependabot.yml for what happens next.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.apache.jackrabbit</groupId>
+                <artifactId>jackrabbit-webdav</artifactId>
+                <version>${upstream.jackrabbit.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -61,7 +84,33 @@
             <artifactId>jcl-over-slf4j</artifactId>
             <version>2.0.17</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.14.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages - eXist-db/jackrabbit-webdav-jakarta</name>
+            <url>https://maven.pkg.github.com/eXist-db/jackrabbit-webdav-jakarta</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages - eXist-db/jackrabbit-webdav-jakarta</name>
+            <url>https://maven.pkg.github.com/eXist-db/jackrabbit-webdav-jakarta</url>
+        </snapshotRepository>
+    </distributionManagement>
 
     <build>
         <plugins>
@@ -72,6 +121,11 @@
                 <configuration>
                     <release>17</release>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
             </plugin>
             <plugin>
                 <groupId>org.openrewrite.maven</groupId>
