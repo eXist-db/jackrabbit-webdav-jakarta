@@ -1,0 +1,160 @@
+name: Check upstream Jackrabbit release
+
+on:
+  schedule:
+    # Mondays 09:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Optional: pin a specific upstream version (e.g. 2.22.4). Leave blank to auto-detect latest.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    name: Detect and bump
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Determine current vendored version
+        id: current
+        run: |
+          current="$(grep -m1 '<version>' pom.xml | sed -E 's@.*<version>([0-9]+\.[0-9]+\.[0-9]+)-jakarta-ee10</version>.*@\1@')"
+          if [[ -z "$current" ]]; then
+            echo "Failed to parse current upstream version from pom.xml" >&2
+            exit 1
+          fi
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          echo "Current vendored upstream version: $current"
+
+      - name: Determine target upstream version
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TARGET: ${{ github.event.inputs.target_version }}
+          CURRENT: ${{ steps.current.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TARGET" ]]; then
+            target="$INPUT_TARGET"
+            echo "Using pinned target from workflow input: $target"
+          else
+            target="$(gh api --paginate repos/apache/jackrabbit/tags --jq '.[].name' \
+              | grep -E '^jackrabbit-2\.[0-9]+\.[0-9]+$' \
+              | sed 's/^jackrabbit-//' \
+              | sort -V \
+              | tail -n1)"
+            echo "Latest upstream tag: $target"
+          fi
+          if [[ -z "$target" ]]; then
+            echo "Could not determine target upstream version" >&2
+            exit 1
+          fi
+          higher="$(printf '%s\n%s\n' "$CURRENT" "$target" | sort -V | tail -n1)"
+          if [[ "$target" == "$CURRENT" || "$higher" != "$target" ]]; then
+            echo "No newer upstream version available (current=$CURRENT, target=$target)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "version=$target" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if bump branch already exists
+        if: steps.target.outputs.skip != 'true'
+        id: branch
+        env:
+          TARGET: ${{ steps.target.outputs.version }}
+        run: |
+          branch="upstream-bump/${TARGET}"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists on origin; skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download new sources.jar from Maven Central
+        if: steps.target.outputs.skip != 'true' && steps.branch.outputs.skip != 'true'
+        env:
+          TARGET: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          url="https://repo1.maven.org/maven2/org/apache/jackrabbit/jackrabbit-webdav/${TARGET}/jackrabbit-webdav-${TARGET}-sources.jar"
+          echo "Downloading $url"
+          curl -fsSL -o sources.jar.new "$url"
+          mv sources.jar.new sources.jar
+
+      - name: Re-extract sources and re-apply Jakarta EE 10 transform
+        if: steps.target.outputs.skip != 'true' && steps.branch.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          workspace="$PWD"
+          rm -rf src/main/java src/main/resources
+          mkdir -p src/main/java src/main/resources
+          tmp="$(mktemp -d)"
+          unzip -q sources.jar -d "$tmp"
+          rm -rf "$tmp/META-INF"
+          # .java → src/main/java, everything else → src/main/resources
+          (cd "$tmp" && find . -type f -name '*.java' | while read -r f; do
+             dest="$workspace/src/main/java/${f#./}"
+             mkdir -p "$(dirname "$dest")"
+             cp "$f" "$dest"
+           done)
+          (cd "$tmp" && find . -type f ! -name '*.java' | while read -r f; do
+             dest="$workspace/src/main/resources/${f#./}"
+             mkdir -p "$(dirname "$dest")"
+             cp "$f" "$dest"
+           done)
+          ls src/main/java
+          mvn -B -ntp rewrite:run
+
+      - name: Bump pom.xml version
+        if: steps.target.outputs.skip != 'true' && steps.branch.outputs.skip != 'true'
+        env:
+          CURRENT: ${{ steps.current.outputs.version }}
+          TARGET: ${{ steps.target.outputs.version }}
+        run: |
+          sed -i.bak "0,/<version>${CURRENT}-jakarta-ee10<\/version>/s//<version>${TARGET}-jakarta-ee10<\/version>/" pom.xml
+          rm pom.xml.bak
+          grep -n "<version>${TARGET}-jakarta-ee10</version>" pom.xml
+
+      - name: Open pull request
+        if: steps.target.outputs.skip != 'true' && steps.branch.outputs.skip != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ${{ steps.branch.outputs.name }}
+          base: main
+          commit-message: |
+            Bump upstream Apache Jackrabbit WebDAV to ${{ steps.target.outputs.version }}
+          title: |
+            Bump upstream Apache Jackrabbit WebDAV to ${{ steps.target.outputs.version }}
+          body: |
+            Detected new upstream release `jackrabbit-${{ steps.target.outputs.version }}`
+            (current vendored: `${{ steps.current.outputs.version }}`).
+
+            This PR:
+            - re-vendors `sources.jar` from Maven Central
+            - re-extracts source into `src/main/java/` and resources into `src/main/resources/`
+            - runs `mvn rewrite:run` to re-apply the Jakarta EE 10 transform
+            - bumps `pom.xml` `<version>` to `${{ steps.target.outputs.version }}-jakarta-ee10`
+
+            CI gates merge. If the smoke test passes, the bump is safe to merge;
+            tag `v${{ steps.target.outputs.version }}-jakarta-ee10` after merge to
+            publish to GitHub Packages.
+          labels: upstream-bump
